@@ -1,0 +1,349 @@
+authors: Petr Malaník, Marek Barvíř
+
+# ILI 1
+-----------------------------------                                     Fallocate
+fallocate - vytvoreni souboru
+ -l -> delka ( 150M, 1G, 1T )
+
+fallocate -l 150M {nazev}
+
+-----------------------------------                                     Losetup
+losetup - kontrola a nastaveni loop dev.
+-a -> prehled vsech loop dev.
+-d {nazev} -> odpojeni loop dev.
+-D -> odpojeni vsech loop dev.
+-f {nazev} ->  pripoji "soubor" jako loop dev.
+-f -> najde prvni nepripojene loop dev.
+
+losetup -a
+losetup -f {nazev}
+losetup -d {nazev}
+losetup -D
+---------------------------------
+---losetup po rebootu
+vim /etc/rc.local
+chmod +x /etc/rc.local
++pridat
+losetup /dev/loop[0-x] /cesta/k/souboru
+
+---------------------------------
+--mount pri bootovani
+crontab -e
+pridat
+@reboot mount -t ext4 /dev/vg1/thin1 /mountpoint
+
+----------------------------------                                      PV
+
+pvcreate - pripravy disk nebo pratition na pouziti LVM
+
+pvs         - nejmene informaci
+pvscan      |
+pvdisplay   - nejvice informaci
+
+pvcreate {nazev_pv}
+
+----------------------------------                                      VG
+vgcreate - vytvoreni vg
+vgextend - rozsireni vg
+vgreduce - redukovani vg
+vgremove - zniceni vg
+vgrename - prejmenovani vg
+vgchange - zmena atributu vg
+
+vgs         - nejmene informaci
+vgscan      |
+vgdisplay   - nejvice informaci
+
+vgcreate {nazev_vg} {nazev_pv}*x
+vgextend {nazev_vg} {nazev_pv}*x
+vgreduce {nazev_vg} {nazev_pv}*x
+vgrename {nazev_vg_old} {nazev_vg_new}
+vgremove {nazev_vg}
+
+----------------------------------                                      LV
+
+lvcreate - vytvoreni vg
+lvextend - rozsireni vg
+lvreduce - redukovani vg
+lvremove - zniceni vg
+lvrename - prejmenovani vg
+lvchange - zmena atributu vg
+
+lvs         - nejmene informaci
+lvscan      |
+lvdisplay   - nejvice informaci
+
+lvcreate {nazev_vg} -L {size} -n {lv_name}
+# rosiri vg o 16M z disku pv ( disk musi byt soucasti vg )
+lvextend -L+16M {vg_name}/{lv_name} {pv_name}
+# rozsiri vg o veskere volne misto pv
+lvextend {vg_name}/{lv_name} {pv_name}
+# redukuje velikost lv na 100M
+lvreduce --size 100M {vg_name}/{lv_name}
+# odstrani vsechny lv ve vg_name
+lvremove {vg_name}
+# odstrani lv_name
+lvremove {vg_name}/{lv_name}
+
+lvrename {nazev_vg_old} {nazev_lv_old} {nazev_lv_new}
+
+# ILI 2
+
+#Thinpool
+# ve dvou prikazu
+# vytvoreni realneho mista
+lvcreate -L 100M -T "VG_NAME" -n "L_THIN_NAME"
+# vytvoreni virtualniho mista
+lvcreate -V1G -T "VG_NAME"+"L_THIN_NAME" -n "THIN_VOLUME"
+# v jedom prikazu
+lvcreate -L 100M -T "VG_NAME"/"L_THIN_NAME" -V1G -n "THIN_VOLUME"
+
+# RAID
+
+# prehled raidu
+cat /proc/mdstat
+# vytvoreni raidu
+mdadm --create --verbose /dev/md0 -l "RAID_NUMBER" -n "NUMBER_OF_DEVICES" /dev/loop[X-Y] [--spare-device=X /dev/loop[X-Y] ]
+# vypis o raidu 
+mdadm -D /dev/md0
+# simulovani chyby u raidu
+mdadm --manage /dev/md0 --set-faulty /dev/loopX
+# pridani dev do raidu
+mdadm --add /dev/md0 /dev/loopX
+# ukonceni raidu 
+mdadm --stop /dev/md0
+
+# ILI 3 
+fallocate -l X disk1
+losetup -f disk1
+mkfs.btrfs /dev/loopX
+
+mkdir -p /tmp/mountpoint
+mount /dev/loop0 /tmp/mountpoint
+
+cd /tmp/mountpoint
+
+btrfs filesystem show
+btrfs subvolume create "SUBV_NAME"
+btrfs sub list /tmp/mountpoint
+btrfs device add "LOOP_DEV" /tmp/mountpoint
+
+btrfs balance start -dconvert=raid5 -mconvert=raid5 /tmp/mountpoint
+btrfs subvolume snapshot /tmp/mountpoint/"SUBV_NAME" /tmp/mountpoint/"SUBV_NAME"
+
+
+# ILI 4
+
+Setup iscsi
+there is how to set iscsi after re-boot
+https://www.rootusers.com/how-to-configure-an-iscsi-target-and-initiator-in-linux/
+
+-- iniciator ---
+
+fallocate -l 400M disk1
+losetup -f disk1
+
+targetcli
+    - cd backstores/block
+    - c
+    - cd /iscsi
+    - create
+    - cd /iscsi/firstdisk/tpg1/luns
+    - create storage_object=/backstores/block/firstdisk
+    - cd /iscsi/firstdisk:/tpg1/acls
+    - create "name from /etc/iscsi/iniciationname.iscsi"
+    - cd "what has been created"
+    - set auth userid=username
+    - set auth password=password
+    - cd /
+    - saveconfig
+    - exit
+    - firewall-cmd --permanent --add-port=3260/tcp
+    - firewall-cmd --reload
+    - systemctl enable target --povoleni iscsi po bootu
+
+-- target --
+    - firewall-cmd --permanent --add-port=3260/tcp
+    - firewall-cmd --reload
+    - iscsiadm --mode discoverydb --type sendtargets --portal "IP" --discover
+    - vim /etc/iscsi/iscsid.conf
+    - uncomment node.session.auth.authmethod = CHAP
+    - uncomment node.session.auth.username = "userid from above"
+    - uncomment node.session.auth.password = "password from above"
+    - iscsiadm --mode node --targetname "name by discovery iqn..." --portal "IP":"PORT" --login
+    - fdisk -l -> name of disk
+    - mkfs.ext4 /dev/sdb
+    - mkdir mnt
+    - mount /dev/sdb mnt
+
+-- update --
+	- umount mnt
+	- iscsiadm -m session --rescan
+	- mount /dev/sdb mnt
+
+# ILI 5
+    
+fallocate -l 400M disk1
+losetup -f disk1
+
+--vytvoření luks hlavičky
+cryptsetup luksFormat /dev/loop0
+
+--odemčení disku
+cryptsetup luskOpen /dev/loop0 "name"
+
+--disk je ulozen na /dev/mapper/"name" pracuje se jako s normalnim diskem ( pvcreate, atd.)
+pvcreate /dev/mapper/"name"
+atd...
+--nebo jen vytvoření fs
+mkfs.ext4 /dev/mapper/"name"
+
+--zobrazeni luks hlavicky-
+cryptsetup luksDump /dev/loop0
+
+--pridani klice do luks-
+cryptsetup luksAddKey /dev/loop0
+
+--odebrani klice z luks-
+cryptsetup luksRemoveKey /dev/loop0
+
+// lvchange -a n "LV_NAME"
+cryptsetup luksClose "name"
+
+--zobrazeni stavu sifrovaneho disku-
+cryptsetup status "name"
+
+======= AUTOMATIC =====
+cryptsetup luksHeaderBackup /dev/loop0 --header-backup-file /cesta/file
+cryptsetup luksHeaderRestore /dev/loop0 --header-backup-file /cesta/file
+======= MANUAL =======
+cryptsetup luksDump /dev/loop0 | grep "Payload offset" // cislo a
+fdisk -l /dev/loop | grep "Sector size" // cislo b
+
+dd if=/dev/loop0 of=/cesta/file bs=a count=b    // ulozeni do file
+dd if=/cesta/file of=/dev/loop0 bs=a count=b    // prepsani loop dev. file
+======================================================================
+
+# ILI 6
+yum install -y pacemaker pcs psmisc policycoreutils-python
+STONITH - shoot the other note in the head 
+
+clusterlabs.org
+http://clusterlabs.org/doc/Cluster_from_Scratch.pdf
+
+hostnamectl set-hostname "nazev"
+
+PC1 - 198.168.10.1
+PC2 - 198.168.10.2
+
+GATEWAY="198.168.10.101"
+
+PC1 = *
+PC2 = +
+
+vim /ets/hosts pridat pojmenovani pro "pc1" "pc2"           | +*
+systemctl start firewalld
+firewall-cmd --permanent --add-service=high-availability    | +*
+firewall-cmd --reload
+
+# yum install -y pacemaker pcs psmisc policycoreutils-python| +*
+
+systemctl start pcsd.service                                | +*
+systemctl enable pcsd.service                               | +*
+passwd hacluster                                            | +*
+
+pcs cluster auth "pc1" "pc2"                                | *
+user: hacluster
+
+pcs cluster setup --name "cluster_name" "pc1" "pc2"         | *
+systemctl enable corosync.service                           |+ *
+systemctl enable pacemaker.service                          |+ *
+pcs cluster enable --all                                    |+ *
+pcs property set stonith-enabled=false
+pcs cluster start {--all, "pc1" "pc2"}                      | *
+
+pcs cluster status                                          | *
+pcs status
+
+================APACHE(!!!mimo cluster!!!!)====================
+--instalace balicku
+sudo yum install httpd
+
+--povoleni start pri spusteni
+systemctl enable httpd
+
+--spusteni apache
+systemctl start httpd
+
+--stav apache
+systemctl status httpd
+
+--nastaveni firewallu
+firewall-cmd --permanent --add-port=80/tcp
+firewall-cmd --permanent --add-port=443/tcp
+firewall-cmd --reload
+
+--změna složky
+/etc/httpd/conf/httpd.conf
+DocumentRoot = "slozka"
+<Directory "slozka" >
+
+--ostraneni testovaci obrazovky apache
+--zakomentovani vsech radku v
+/etc/httpd/conf.d/welcome.conf
+
+--pristup k webu v prohlizeci
+localhost
+
+--SELinux policy
+httpd_sys_content_t --ReadOnly
+httpd_sys_rw_content_t -RW
+
+==================SELinux==================
+--mozne stavy
+enforce     --pouziva pravidla, zapisuje logy
+permissive  --nepouziva pravidla, zapisuje logy
+disabled    --vypnuto
+
+--soubor pro nastaveni SELinuxu
+/etc/selinux/config
+
+XXX/log/message // vypisy selinuxu
+
+--ziskani stavu SELinuxu
+sestatus
+
+-- BOOLEANS
+
+getsebool -a // vypise vsechny booly
+semanage boolean -l // detailnejsi popis boolu
+sesearch -b "BOOL_NAME" -ACT // co vse povoluje
+setsebool -P "BOOL_NAME"
+
+-- CONTEXT
+
+chcon -t "SE_TYPE" "FILE" // nastavi se_type na file, musi se aktualizovat !!
+restorecon -vR "SLOZKA" // aktualizace kontextu
+semanage fcontext -a -e /var/www /foo    // kontext co je ve /var/www da na /foo , aktualizace !!
+
+-- POLICY
+
+grep "sluzba" /var/log/audit.log | audit2allow -M "NEhW_POLICY_NAME" // vytvoreni nove policy z logu
+sepolicy -i "NEW_POLICY_NAME" // instalace nove policy
+
+https://access.redhat.com/documentation/en-US/Red_Hat_Enterprise_Linux/5/html/Configuration_Example_-_NFS_Over_GFS/NFS_GFS_Service_Configuration.html
+
+--CHAT and heeeeelp :D 
+https://www.ulyaoth.net/resources/tutorial-ssh-into-a-virtualbox-linux-guest-from-your-host.35/
+cronetab -e
+mkdir -p /mnt/my-data
+@reboot mount -t ext4 /dev/loop0 /mnt/my-data
+
+http://www.bo-yang.net/2015/08/31/centos7-install-tftp-server
++
+chmod 777 /var/lib/tftpboot
+
+cryptsetup loopaesOpen --key-file="file-kde-je-klic" /dev/sdb "name"
+
+
+
