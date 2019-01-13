@@ -1,5 +1,14 @@
 #!/bin/sh
 
+|        | Min number of disks | Fault tolerance |
+| RAID 0 |                   2 |               0 |
+| RAID 1 |                   2 |           n - 1 |
+| RAID 2 |                   3 |               1 |
+| RAID 3 |                   3 |               1 |
+| RAID 4 |                   3 |               1 |
+| RAID 5 |                   3 |               1 |
+| RAID 6 |                   4 |               2 |
+
 RAID_NAME=md0
 
 # Create disk files
