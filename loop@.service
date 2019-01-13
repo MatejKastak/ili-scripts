@@ -1,6 +1,7 @@
 [Unit]
 Description=Activate loop device
 DefaultDependencies=no
+Before=local-fs.target
 After=systemd-udev-settle.service
 Wants=systemd-udev-settle.service
 
