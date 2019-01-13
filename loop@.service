@@ -1,0 +1,12 @@
+[Unit]
+Description=Activate loop device
+DefaultDependencies=no
+After=systemd-udev-settle.service
+Wants=systemd-udev-settle.service
+
+[Service]
+ExecStart=/sbin/losetup /dev/loop%i /root/disks/loop%i
+Type=oneshot
+
+[Install]
+WantedBy=local-fs.target
